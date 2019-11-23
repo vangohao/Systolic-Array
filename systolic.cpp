@@ -9,11 +9,13 @@ dtype B0[NN][NN];
 dtype A1[NN][NN];
 dtype B1[NN][NN];
 dtype C[NN][NN];
+dtype C0[N][N];
 
 void provide_A(dtype A[NN][NN], stmtype hpipe[N + 1][N + 1], int i, int ar)
 {
     for (int k = 0; k<NN; k++)
     {
+        #pragma HLS pipeline
         hpipe[i][0].write(A[ar * N + i - 1][k]);
     }
 }
@@ -22,6 +24,7 @@ void provide_B(dtype B[NN][NN], stmtype vpipe[N + 1][N + 1], int j, int bc)
 {
     for (int k = 0; k<NN; k++)
     {
+        #pragma HLS pipeline
         vpipe[0][j].write(B[k][bc * N + j - 1]);
     }
 }
@@ -31,6 +34,7 @@ void eat_h(stmtype hpipe[N + 1][N + 1], int i)
     dtype eat;
     for (int k = 0; k<NN; k++)
     {
+        #pragma HLS pipeline
         eat = hpipe[i][N].read();
     }
 }
@@ -40,6 +44,7 @@ void eat_v(stmtype vpipe[N + 1][N + 1], int j)
     dtype eat;
     for (int k = 0; k<NN; k++)
     {
+        #pragma HLS pipeline
         eat = vpipe[N][j].read();
     }
 }
@@ -53,13 +58,17 @@ void PE(stmtype hpipe[N + 1][N + 1], stmtype vpipe[N + 1][N + 1], int i, int j, 
 
     dtype a;
     dtype b;
+    int x = ar * N + i - 1;
+    int y = bc * N + j - 1;
     for(int k = 0; k < NN; k++)
     {
+    // #pragma HLS latency min = 4 max = 4
     #pragma HLS pipeline
         // Shift_in(a, b, A, B, hpipe, vpipe, i, j, k);
         a = hpipe[i][j - 1].read();
         b = vpipe[i - 1][j].read();
-        C[ar * N + i - 1][bc * N + j - 1] += a * b;
+        // C[x][y] += a * b;
+        C0[i - 1][j - 1] += a * b;
         hpipe[i][j].write(a);
         vpipe[i][j].write(b);
         // Shift_out(a, b, hpipe, vpipe, i, j);
@@ -70,8 +79,10 @@ void PE_array(dtype A[NN][NN], dtype B[NN][NN], int ar, int bc)
 {
     #pragma HLS array_partition variable=A cyclic factor=N dim=1
     #pragma HLS array_partition variable=B cyclic factor=N dim=2
-    #pragma HLS array_partition variable=C cyclic factor=N dim=1
-    #pragma HLS array_partition variable=C cyclic factor=N dim=2
+    // #pragma HLS array_partition variable=C cyclic factor=N dim=1
+    // #pragma HLS array_partition variable=C cyclic factor=N dim=2
+    #pragma HLS array_partition variable=C0 complete dim=1
+    #pragma HLS array_partition variable=C0 complete dim=2
 
     #pragma HLS dataflow
 stmtype hpipe[N + 1][N + 1];  // Output Pipe
@@ -154,6 +165,9 @@ void systolic(dtype *input_A, dtype *input_B, dtype *output_C, int A_R, int A_C,
     #pragma HLS array_partition variable=B1 cyclic factor=N dim=2
     #pragma HLS array_partition variable=C cyclic factor=N dim=1
     #pragma HLS array_partition variable=C cyclic factor=N dim=2
+    #pragma HLS array_partition variable=C0 complete dim=1
+    #pragma HLS array_partition variable=C0 complete dim=2
+    // #pragma HLS resource variable=C0 core=RAM_1P_LUTRAM
 
     for(int offset_A_R = 0; offset_A_R < A_R; offset_A_R += NN)
     {
@@ -183,7 +197,25 @@ void systolic(dtype *input_A, dtype *input_B, dtype *output_C, int A_R, int A_C,
                 {
                     for (int bc=0; bc < NN / N; bc++)
                     {
+                        for (int i = 0; i < N; i++)
+                        {
+                            #pragma HLS unroll
+                            for (int j = 0; j < N; j++)
+                            {
+                                #pragma HLS unroll
+                                C0[i][j] = C[ar * N + i][bc * N + j];
+                            }
+                        }
                         PE_array(A0, B0, ar, bc);
+                        for (int i = 0; i < N; i++)
+                        {
+                            #pragma HLS unroll
+                            for (int j = 0; j < N; j++)
+                            {
+                                #pragma HLS unroll
+                                C[ar * N + i][bc * N + j] = C0[i][j];
+                            }
+                        }
                     }
                 }
             }
